@@ -1,5 +1,5 @@
 {
-  "name": "better-custom",
+  "name": "pi-custom-endpoint",
   "version": "0.4.1",
   "description": "Pi and Oh My Pi extension for managing custom providers through an interactive wizard.",
   "type": "module",
@@ -40,11 +40,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ratatulieoi/better-custom.git"
+    "url": "git+https://github.com/XOVIET-GAME/pi-custom-endpoint.git"
   },
-  "homepage": "https://github.com/ratatulieoi/better-custom#readme",
+  "homepage": "https://github.com/XOVIET-GAME/pi-custom-endpoint#readme",
   "bugs": {
-    "url": "https://github.com/ratatulieoi/better-custom/issues"
+    "url": "https://github.com/XOVIET-GAME/pi-custom-endpoint/issues"
   },
   "pi": {
     "extensions": [

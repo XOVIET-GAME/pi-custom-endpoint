@@ -1,4 +1,4 @@
-# better-custom
+# pi-custom-endpoint
 
 A better way to add custom providers for Pi and Oh My Pi (OMP).
 
@@ -29,13 +29,13 @@ A better way to add custom providers for Pi and Oh My Pi (OMP).
 From npm:
 
 ```bash
-pi install npm:better-custom
+pi install npm:pi-custom-endpoint
 ```
 
 From GitHub:
 
 ```bash
-pi install https://github.com/ratatulieoi/better-custom
+pi install https://github.com/XOVIET-GAME/pi-custom-endpoint
 ```
 
 ## Usage
