@@ -65,6 +65,38 @@ omp install pi-custom-endpoint
 omp install https://github.com/XOVIET-GAME/pi-custom-endpoint
 ```
 
+### Update
+
+**Pi:**
+```bash
+# Re-install from npm to update:
+pi install npm:pi-custom-endpoint@latest
+
+# Or update directly if installed via npm:
+pi update pi-custom-endpoint
+```
+
+**Oh My Pi (OMP):**
+```bash
+# Update to latest npm release:
+omp install pi-custom-endpoint@latest
+
+# Or force re-install:
+omp install pi-custom-endpoint --force
+```
+
+### Uninstall / Remove
+
+**Pi:**
+```bash
+pi remove pi-custom-endpoint
+```
+
+**Oh My Pi (OMP):**
+```bash
+omp plugin uninstall pi-custom-endpoint
+```
+
 ## Usage
 
 After installing, reload pi if needed, then run:
