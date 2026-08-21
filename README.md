@@ -42,20 +42,25 @@ pi install https://github.com/XOVIET-GAME/pi-custom-endpoint
 
 ### Oh My Pi (OMP)
 
-OMP requires **[Bun](https://bun.sh)** in system PATH to run `omp install`.
+> **Note:** OMP uses `bun` internally for all plugin operations (`install`, `uninstall`, `update`). Bun must be available in your system `PATH`.
 
-**1-line Bun check & install (if not already installed):**
+**Step 1 — Install Bun & add to PATH (one-time setup):**
 
-* **macOS / Linux (Bash/Zsh):**
+* **macOS / Linux:**
   ```bash
   command -v bun >/dev/null 2>&1 || curl -fsSL https://bun.sh/install | bash
+  # Then restart your terminal (or run: source ~/.bashrc / source ~/.zshrc)
   ```
-* **Windows (PowerShell):**
+* **Windows (PowerShell — run once as user):**
   ```powershell
+  # Install Bun if missing:
   if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { irm bun.sh/install.ps1 | iex }
+  # Add to permanent user PATH so all new terminals pick it up:
+  [System.Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:USERPROFILE\.bun\bin", "User")
   ```
+  Then **open a new terminal** for the PATH change to take effect.
 
-**Install extension in OMP:**
+**Step 2 — Install extension:**
 
 ```bash
 # From npm:
@@ -96,6 +101,7 @@ pi remove pi-custom-endpoint
 ```bash
 omp plugin uninstall pi-custom-endpoint
 ```
+> **Note (Windows):** If you see `Error: Executable not found in $PATH: "bun"`, add Bun to your PATH first (see install steps above), then open a new terminal and retry.
 
 ## Usage
 
