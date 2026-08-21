@@ -1520,11 +1520,11 @@ async function collectModelIds(
 	}
 }
 
-export default function betterCustomWizard(pi: ExtensionAPI) {
-	pi.registerCommand("better-custom", {
-		description: "Wizard for adding, editing, or deleting custom providers in ~/.pi/agent/models.json",
+export default function customEndpointWizard(pi: ExtensionAPI) {
+	pi.registerCommand("endpoint-custom", {
+		description: "Wizard for adding, editing, or deleting custom providers in models configuration",
 		handler: async (_args, ctx) => {
-			const action = await selectOne(ctx, "Better custom", ["Add provider", "Edit provider", "Delete provider"]);
+			const action = await selectOne(ctx, "Custom Endpoints", ["Add provider", "Edit provider", "Delete provider"]);
 			if (!action) return;
 			if (action === "Edit provider") {
 				await editProviderFlow(ctx);

@@ -28,16 +28,41 @@ A better way to add custom providers for Pi and Oh My Pi (OMP).
 
 ## Install
 
-From npm:
+### Pi
 
+From npm:
 ```bash
 pi install npm:pi-custom-endpoint
 ```
 
 From GitHub:
-
 ```bash
 pi install https://github.com/XOVIET-GAME/pi-custom-endpoint
+```
+
+### Oh My Pi (OMP)
+
+OMP requires **[Bun](https://bun.sh)** in system PATH to run `omp install`.
+
+**1-line Bun check & install (if not already installed):**
+
+* **macOS / Linux (Bash/Zsh):**
+  ```bash
+  command -v bun >/dev/null 2>&1 || curl -fsSL https://bun.sh/install | bash
+  ```
+* **Windows (PowerShell):**
+  ```powershell
+  if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { irm bun.sh/install.ps1 | iex }
+  ```
+
+**Install extension in OMP:**
+
+```bash
+# From npm:
+omp install pi-custom-endpoint
+
+# From GitHub:
+omp install https://github.com/XOVIET-GAME/pi-custom-endpoint
 ```
 
 ## Usage
@@ -45,7 +70,7 @@ pi install https://github.com/XOVIET-GAME/pi-custom-endpoint
 After installing, reload pi if needed, then run:
 
 ```text
-/better-custom
+/endpoint-custom
 ```
 
 The wizard can:
