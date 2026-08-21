@@ -1,5 +1,7 @@
 # pi-custom-endpoint
 
+> This project is a fork of the original [ratatulieoi/better-custom](https://github.com/ratatulieoi/better-custom) repository.
+
 A better way to add custom providers for Pi and Oh My Pi (OMP).
 
 ## Features
