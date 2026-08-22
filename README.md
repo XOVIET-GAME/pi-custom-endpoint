@@ -51,14 +51,18 @@ pi install https://github.com/XOVIET-GAME/pi-custom-endpoint
   command -v bun >/dev/null 2>&1 || curl -fsSL https://bun.sh/install | bash
   # Then restart your terminal (or run: source ~/.bashrc / source ~/.zshrc)
   ```
-* **Windows (PowerShell — run once as user):**
+* **Windows — PowerShell** (run once, then open a new terminal):
   ```powershell
   # Install Bun if missing:
   if (-not (Get-Command bun -ErrorAction SilentlyContinue)) { irm bun.sh/install.ps1 | iex }
-  # Add to permanent user PATH so all new terminals pick it up:
+  # Add to permanent user PATH:
   [System.Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:USERPROFILE\.bun\bin", "User")
   ```
-  Then **open a new terminal** for the PATH change to take effect.
+  > ⚠️ These commands require **PowerShell** (`pwsh` or `Windows PowerShell`), not `cmd.exe`.  
+  > If using **cmd.exe**, use this instead for the current session:
+  > ```cmd
+  > set PATH=%PATH%;%USERPROFILE%\.bun\bin
+  > ```
 
 **Step 2 — Install extension:**
 
