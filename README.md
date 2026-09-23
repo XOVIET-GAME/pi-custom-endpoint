@@ -23,7 +23,7 @@ A better way to add custom providers for Pi and Oh My Pi (OMP).
 - Unique provider names — the wizard refuses to overwrite an existing provider
 - Image input enabled by default (`input: ["text", "image"]`) so vision-capable
   models receive images instead of having them silently dropped
-- Reasoning enabled by default at the `xhigh` ceiling for newly added models
+- Reasoning enabled by default at the `xhigh` ceiling for newly added models (selectable up to `max`)
 - Safe delete flow for whole providers or individual models
 
 ## Install
@@ -132,7 +132,7 @@ Guides you through:
 - model discovery (auto-probe `/models`) or manual model entry
 
 Newly added models default to `input: ["text", "image"]` and `reasoning: true`
-at the `xhigh` ceiling. Tune any of this later via Edit provider.
+at the `xhigh` ceiling (selectable up to `max`). Tune any of this later via Edit provider.
 
 ### Edit a provider
 
@@ -141,7 +141,7 @@ Pick a provider, then choose:
 - Re-probe for new models — query `/models` again and add ones not yet configured
 - Set context window (all models) — apply one `contextWindow` to every model
 - Edit per model — pick a model and edit a single field:
-  - Reasoning ceiling (`off` → `xhigh`)
+  - Reasoning ceiling (`off` → `max`)
   - Vision (text+image vs text-only)
   - Context window
   - Max output tokens
@@ -157,13 +157,26 @@ overrides) are preserved.
 
 Lists configured providers and removes the selected one after confirmation.
 
-## How reasoning maps to pi
+## How reasoning maps to Pi and OMP
 
-pi exposes six thinking levels: `off, minimal, low, medium, high, xhigh`. When a
-model has `reasoning: true`, pi treats `minimal` through `high` as available.
-`xhigh` is opt-in and only unlocked when explicitly mapped, and any level set to
-`null` is removed. The wizard writes a `thinkingLevelMap` to unlock `xhigh` or to
-cap reasoning below `high`.
+Pi and Oh My Pi (OMP) support canonical thinking levels from `off` through `max`
+(`off, minimal, low, medium, high, xhigh, max`). New providers and added models
+continue to default to `xhigh`, with `max` selectable as the maximum ceiling.
+
+When a model has `reasoning: true`, legacy `thinkingLevelMap` behavior remains for
+backwards compatibility: `minimal` through `high` are available by default, while
+`xhigh` or `max` ceilings and lower-level caps map explicitly.
+
+### Native OMP `max` vs. provider wire aliases
+
+- **Native `max` capability:** OMP represents native reasoning levels using
+  `thinking: { mode: "effort" | "anthropic-adaptive", efforts: [...] }`. Selecting the `max` ceiling includes
+  `max` in `thinking.efforts` (`[minimal, low, medium, high, xhigh, max]`), unlocking
+  native `max` in OMP while maintaining `thinkingLevelMap` for Pi and backwards compatibility.
+- **Provider wire alias (`{xhigh: "max"}`):** Existing configs may map `xhigh` to
+  `"max"` in `thinkingLevelMap` (e.g. `{ xhigh: "max" }`). This is a provider wire-value
+  override for the `xhigh` level, **not** native OMP `max`. A model with `{xhigh: "max"}`
+  still operates with an `xhigh` ceiling unless native `max` is selected.
 
 ## Configuration
 

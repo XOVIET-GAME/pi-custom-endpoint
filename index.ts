@@ -9,10 +9,10 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 type ProviderApi = "openai-completions" | "anthropic-messages";
 type ProviderStyle = "openai" | "anthropic" | "ollama";
 type ApiKeyMode = "env" | "literal" | "shell" | "none";
-// pi's reasoning ceilings. "off" means no reasoning; the rest are the levels a
-// model is allowed to use. See pi-ai getSupportedThinkingLevels.
-type ReasoningCeiling = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-const REASONING_LEVELS: ReasoningCeiling[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+// pi / omp reasoning ceilings. "off" means no reasoning; the rest are the levels a
+// model is allowed to use. Native max requires thinking.efforts containing max.
+type ReasoningCeiling = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+const REASONING_LEVELS: ReasoningCeiling[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 // Per-model knobs the wizard can write. apiKey lives at provider scope, not here.
 type ModelOptions = {
@@ -506,7 +506,8 @@ async function promptApiKey(
 
 function reasoningLabel(level: ReasoningCeiling): string {
 	if (level === "off") return "Off - no reasoning";
-	if (level === "xhigh") return "xhigh - maximum (only if the model supports it)";
+	if (level === "max") return "max - maximum reasoning (only if the model supports it)";
+	if (level === "xhigh") return "xhigh - extra high reasoning";
 	return `${level} - cap reasoning at ${level}`;
 }
 
@@ -521,17 +522,23 @@ async function promptReasoning(ctx: CommandContext, current?: ReasoningCeiling):
 	return (choice as ReasoningCeiling | null) ?? null;
 }
 
-// When a model is capped at xhigh, some providers name that level differently
-// (e.g. "max"). Offer an optional override for the provider-facing string.
-async function promptXhighProviderString(ctx: CommandContext, current?: string): Promise<string | undefined> {
+// When a model is capped at xhigh or max, some providers name that level differently
+// (e.g. "max" for xhigh, or "maximum" for max). Offer an optional override for the
+// provider-facing wire string.
+async function promptReasoningProviderString(
+	ctx: CommandContext,
+	level: "xhigh" | "max",
+	current?: string,
+): Promise<string | undefined> {
 	const value = await ctx.ui.input(
-		"xhigh provider value (blank = xhigh)",
-		current && current !== "xhigh" ? `current: ${current}` : 'e.g. max (leave blank to send "xhigh")',
+		`${level} provider value (blank = ${level})`,
+		current && current !== level ? `current: ${current}` : `e.g. ${level === "xhigh" ? "max" : "maximum"} (leave blank to send "${level}")`,
 	);
 	if (value === undefined) return undefined;
 	const trimmed = value.trim();
 	return trimmed || undefined;
 }
+
 
 async function promptVision(ctx: CommandContext, current?: boolean): Promise<boolean | null> {
 	const choice = await selectOne(ctx, "Image input (vision)", [
@@ -581,21 +588,38 @@ async function promptMaxTokens(ctx: CommandContext, current?: number): Promise<n
 }
 
 // Read the reasoning ceiling + vision flags already stored on a model entry,
-// mirroring pi's getSupportedThinkingLevels so edit defaults match reality.
+// mirroring pi / omp thinking metadata so edit defaults match reality.
 function readModelOptions(model: any): ModelOptions {
 	const vision = Array.isArray(model?.input) ? model.input.includes("image") : true;
 	const contextWindow = typeof model?.contextWindow === "number" ? model.contextWindow : undefined;
-	if (!model || model.reasoning !== true) return { reasoning: "off", vision, contextWindow };
+	if (!model || model.reasoning === false || (model.reasoning !== true && !model.thinking)) {
+		return { reasoning: "off", vision, contextWindow };
+	}
 
-	const map = model.thinkingLevelMap;
+	// 1. Native OMP thinking.efforts metadata: highest recognized effort determines ceiling.
+	// Recognizes native max before xhigh when modern metadata has it.
+	const efforts = Array.isArray(model?.thinking?.efforts) ? model.thinking.efforts : undefined;
+	if (efforts && efforts.length > 0) {
+		for (let i = REASONING_LEVELS.length - 1; i >= 1; i--) {
+			const level = REASONING_LEVELS[i];
+			if (efforts.includes(level)) {
+				return { reasoning: level, vision, contextWindow };
+			}
+		}
+	}
+
+	// 2. Fall back to legacy thinkingLevelMap.
+	// Existing {xhigh: "max"} must still read as ceiling xhigh (provider alias, not native max).
+	const map = model?.thinkingLevelMap;
 	let ceiling: ReasoningCeiling = "high";
 	if (map && typeof map === "object") {
-		if (map.xhigh !== undefined && map.xhigh !== null) {
+		if (map.max !== undefined && map.max !== null) {
+			ceiling = "max";
+		} else if (map.xhigh !== undefined && map.xhigh !== null) {
 			ceiling = "xhigh";
 		} else {
-			for (let i = REASONING_LEVELS.length - 1; i >= 1; i--) {
+			for (let i = REASONING_LEVELS.indexOf("high"); i >= 1; i--) {
 				const level = REASONING_LEVELS[i];
-				if (level === "xhigh") continue;
 				if (map[level] === null) continue;
 				ceiling = level;
 				break;
@@ -605,9 +629,12 @@ function readModelOptions(model: any): ModelOptions {
 	return { reasoning: ceiling, vision, contextWindow };
 }
 
-function readXhighProviderString(model: any): string | undefined {
-	const v = model?.thinkingLevelMap?.xhigh;
-	return typeof v === "string" ? v : undefined;
+function readReasoningProviderString(model: any, level: "xhigh" | "max"): string | undefined {
+	const compatVal = model?.compat?.reasoningEffortMap?.[level];
+	if (typeof compatVal === "string" && compatVal.trim()) return compatVal.trim();
+	const mapVal = model?.thinkingLevelMap?.[level];
+	if (typeof mapVal === "string" && mapVal.trim()) return mapVal.trim();
+	return undefined;
 }
 
 async function promptModelIdsOneByOne(
@@ -648,34 +675,113 @@ async function promptModelIdsOneByOne(
 }
 
 // Apply a reasoning ceiling to an entry in place, preserving other fields.
-// Mirrors pi's getSupportedThinkingLevels: off/minimal/low/medium/high are on
-// by default when reasoning is true; xhigh is available ONLY if explicitly
-// mapped; any level set to null is removed. So we only need a map to (a) unlock
-// xhigh, or (b) cap below high by nulling the higher levels.
-function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOverride?: string) {
+// - Native OMP reasoning requires thinking: { mode, efforts: [...] }.
+//   thinking.efforts contains every canonical level up to the ceiling (native max is exposed here).
+// - thinkingLevelMap is preserved for pi / backwards compatibility.
+//   Legacy {xhigh: "max"} remains ceiling xhigh with wire override "max".
+// - compat.reasoningEffortMap is populated only for non-default wire values, preserving unrelated compat fields.
+// - off cleans up reasoning, thinking, thinkingLevelMap, and xhigh/max entries in compat.reasoningEffortMap.
+function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOverride?: string, api?: ProviderApi) {
+	const override = providerStringOverride?.trim();
+	const compat = entry.compat && typeof entry.compat === "object" ? entry.compat : undefined;
+	const effortMap = compat?.reasoningEffortMap && typeof compat.reasoningEffortMap === "object"
+		? compat.reasoningEffortMap
+		: undefined;
+	const existingThinking = entry.thinking && typeof entry.thinking === "object"
+		? entry.thinking
+		: undefined;
+
 	if (ceiling === "off") {
 		delete entry.reasoning;
+		if (existingThinking) {
+			delete existingThinking.mode;
+			delete existingThinking.efforts;
+			delete existingThinking.requiresEffort;
+			delete existingThinking.defaultLevel;
+			if (Object.keys(existingThinking).length === 0) {
+				delete entry.thinking;
+			}
+		} else {
+			delete entry.thinking;
+		}
 		delete entry.thinkingLevelMap;
+		if (effortMap) {
+			delete effortMap.xhigh;
+			delete effortMap.max;
+			if (Object.keys(effortMap).length === 0) {
+				delete compat?.reasoningEffortMap;
+			}
+			if (compat && Object.keys(compat).length === 0) {
+				delete entry.compat;
+			}
+		}
 		return;
 	}
+
 	entry.reasoning = true;
-	const ceilingIndex = REASONING_LEVELS.indexOf(ceiling);
+
+	// OMP-native metadata: mode depends on provider API (openai-completions => effort, anthropic-messages => anthropic-adaptive).
+	// Preserves unrelated thinking metadata (e.g. effortMap, effortBudgets, effortRouting).
+	const canonicalEfforts = REASONING_LEVELS.filter((l): l is Exclude<ReasoningCeiling, "off"> => l !== "off");
+	const ceilingIndex = canonicalEfforts.indexOf(ceiling as Exclude<ReasoningCeiling, "off">);
+	const resolvedApi: ProviderApi = api || (entry?.api as ProviderApi) || "openai-completions";
+	const mode = resolvedApi === "anthropic-messages" ? "anthropic-adaptive" : "effort";
+	entry.thinking = {
+		...(existingThinking ?? {}),
+		mode,
+		efforts: canonicalEfforts.slice(0, ceilingIndex + 1),
+	};
+	delete entry.thinking.requiresEffort;
+
+	// Legacy thinkingLevelMap for pi / backcompat
 	const map: Record<string, string | null> = {};
-	for (const level of REASONING_LEVELS) {
-		if (level === "off") continue;
-		const index = REASONING_LEVELS.indexOf(level);
-		if (level === "xhigh") {
-			if (ceilingIndex >= index) map.xhigh = providerStringOverride?.trim() || "xhigh";
-		} else if (index > ceilingIndex) {
-			map[level] = null;
+	if (ceiling === "max") {
+		map.xhigh = "xhigh";
+		map.max = override || "max";
+	} else if (ceiling === "xhigh") {
+		map.xhigh = override || "xhigh";
+	} else {
+		for (const level of ["minimal", "low", "medium", "high"] as const) {
+			if (REASONING_LEVELS.indexOf(level) > REASONING_LEVELS.indexOf(ceiling)) {
+				map[level] = null;
+			}
 		}
 	}
 	if (Object.keys(map).length > 0) entry.thinkingLevelMap = map;
 	else delete entry.thinkingLevelMap;
+
+	// Wire-value override in compat.reasoningEffortMap for non-default wire values
+	if (effortMap) {
+		delete effortMap.xhigh;
+		delete effortMap.max;
+	}
+
+	const nonDefaultOverride =
+		ceiling === "xhigh" && override && override !== "xhigh"
+			? { level: "xhigh", value: override }
+			: ceiling === "max" && override && override !== "max"
+				? { level: "max", value: override }
+				: null;
+
+	if (nonDefaultOverride) {
+		const activeCompat = compat ?? (entry.compat = {} as Record<string, unknown>);
+		const activeEffortMap =
+			(activeCompat.reasoningEffortMap && typeof activeCompat.reasoningEffortMap === "object"
+				? activeCompat.reasoningEffortMap
+				: (activeCompat.reasoningEffortMap = {})) as Record<string, string>;
+		activeEffortMap[nonDefaultOverride.level] = nonDefaultOverride.value;
+	} else if (effortMap) {
+		if (Object.keys(effortMap).length === 0) {
+			delete compat?.reasoningEffortMap;
+		}
+		if (compat && Object.keys(compat).length === 0) {
+			delete entry.compat;
+		}
+	}
 }
 
-function buildModelEntry(id: string, opts: ModelOptions, providerStringOverride?: string): any {
-	const entry: any = {
+function buildModelEntry(id: string, opts: ModelOptions, providerStringOverride?: string, api?: ProviderApi): any {
+	const entry: Record<string, unknown> = {
 		id,
 		// Default to text+image so pi forwards images upstream. Without this,
 		// custom models default to text-only and images are silently dropped.
@@ -686,7 +792,7 @@ function buildModelEntry(id: string, opts: ModelOptions, providerStringOverride?
 		entry.contextWindow = opts.contextWindow;
 	}
 
-	applyReasoning(entry, opts.reasoning, providerStringOverride);
+	applyReasoning(entry, opts.reasoning, providerStringOverride, api);
 	return entry;
 }
 
@@ -704,7 +810,7 @@ function buildProviderConfig(
 		baseUrl,
 		api,
 		...(serializedApiKey ? { apiKey: serializedApiKey } : {}),
-		models: modelIds.map((id) => buildModelEntry(id, opts, providerStringOverride)),
+		models: modelIds.map((id) => buildModelEntry(id, opts, providerStringOverride, api)),
 	};
 
 	if (style === "ollama") {
@@ -746,10 +852,8 @@ function providerModelItems(provider: any): SelectItem[] {
 
 			const details: string[] = [];
 			if (model && typeof model === "object") {
-				if (model.reasoning === true) {
-					const opts = readModelOptions(model);
-					details.push(`reasoning:${opts.reasoning}`);
-				}
+				const opts = readModelOptions(model);
+				if (opts.reasoning !== "off") details.push(`reasoning:${opts.reasoning}`);
 				if (Array.isArray(model.input) && model.input.includes("image")) details.push("vision");
 				if (typeof model.contextWindow === "number") details.push(`context ${model.contextWindow}`);
 				if (typeof model.maxTokens === "number") details.push(`max ${model.maxTokens}`);
@@ -950,7 +1054,42 @@ async function setProviderContextWindow(ctx: CommandContext, providerId: string)
 		for (const m of list) {
 			const opts = readModelOptions(m);
 			opts.contextWindow = result === 0 ? undefined : result;
-			const rebuilt = buildModelEntry(modelIdOf(m), opts, readXhighProviderString(m));
+			const wireOverride = (opts.reasoning === "xhigh" || opts.reasoning === "max")
+				? readReasoningProviderString(m, opts.reasoning)
+				: undefined;
+			const modelApi: ProviderApi = (m?.api as ProviderApi) || (p?.api as ProviderApi) || (provider?.api as ProviderApi) || "openai-completions";
+			const rebuilt = buildModelEntry(modelIdOf(m), opts, wireOverride, modelApi);
+			if (m?.api) rebuilt.api = m.api;
+			if (m.thinking && typeof m.thinking === "object") {
+				rebuilt.thinking = { ...m.thinking, ...rebuilt.thinking };
+			}
+			if (m.compat && typeof m.compat === "object") {
+				const existingCompat = { ...m.compat };
+				let mergedEffortMap: Record<string, string> | undefined;
+				if (existingCompat.reasoningEffortMap && typeof existingCompat.reasoningEffortMap === "object") {
+					const { xhigh: _oldXhigh, max: _oldMax, ...unrelatedEffortMap } = existingCompat.reasoningEffortMap;
+					mergedEffortMap = { ...unrelatedEffortMap, ...(rebuilt.compat?.reasoningEffortMap ?? {}) };
+				} else if (rebuilt.compat?.reasoningEffortMap) {
+					mergedEffortMap = { ...rebuilt.compat.reasoningEffortMap };
+				}
+
+				const mergedCompat: Record<string, unknown> = {
+					...existingCompat,
+					...(rebuilt.compat ?? {}),
+				};
+				if (mergedEffortMap && Object.keys(mergedEffortMap).length > 0) {
+					mergedCompat.reasoningEffortMap = mergedEffortMap;
+				} else {
+					delete mergedCompat.reasoningEffortMap;
+				}
+
+				if (Object.keys(mergedCompat).length > 0) {
+					rebuilt.compat = mergedCompat;
+				} else {
+					delete rebuilt.compat;
+					delete m.compat;
+				}
+			}
 			Object.assign(m, rebuilt);
 			if (result === 0) delete m.contextWindow;
 		}
@@ -1030,9 +1169,11 @@ async function editProviderModels(ctx: CommandContext, providerId: string) {
 // caller can adjust its cursor).
 async function editSingleModel(ctx: CommandContext, providerId: string, modelId: string): Promise<boolean> {
 	while (true) {
+		let provider: any;
 		let model: any;
 		try {
-			model = findModel(loadModelsConfig().providers?.[providerId], modelId);
+			provider = loadModelsConfig().providers?.[providerId];
+			model = findModel(provider, modelId);
 		} catch (error) {
 			ctx.ui.notify(`Could not read ${MODELS_JSON_PATH}: ${error instanceof Error ? error.message : String(error)}`, "error");
 			return false;
@@ -1049,7 +1190,7 @@ async function editSingleModel(ctx: CommandContext, providerId: string, modelId:
 		const override = model.baseUrl || model.api ? "set" : "unset";
 
 		const field = await selectOne(ctx, `Edit ${modelId}`, [
-			{ value: "reasoning", label: "Reasoning", suffix: ` • ${opts.reasoning}`, description: "Set the reasoning ceiling (off → xhigh)" },
+			{ value: "reasoning", label: "Reasoning", suffix: ` • ${opts.reasoning}`, description: "Set the reasoning ceiling (off → max)" },
 			{ value: "vision", label: "Vision", suffix: ` • ${opts.vision ? "on" : "off"}`, description: "Toggle image input (text+image vs text-only)" },
 			{ value: "context", label: "Context window", suffix: ` • ${ctxWin}`, description: "Max context tokens for this model" },
 			{ value: "maxtokens", label: "Max output tokens", suffix: ` • ${maxTok}`, description: "Max tokens this model may generate" },
@@ -1062,9 +1203,18 @@ async function editSingleModel(ctx: CommandContext, providerId: string, modelId:
 		if (field === "reasoning") {
 			const reasoning = await promptReasoning(ctx, opts.reasoning);
 			if (reasoning === null) continue;
-			let xhigh: string | undefined;
-			if (reasoning === "xhigh") xhigh = await promptXhighProviderString(ctx, readXhighProviderString(model));
-			await mutateModel(ctx, providerId, modelId, (m) => applyReasoning(m, reasoning, xhigh));
+			let wireOverride: string | undefined;
+			if (reasoning === "xhigh" || reasoning === "max") {
+				wireOverride = await promptReasoningProviderString(
+					ctx,
+					reasoning,
+					readReasoningProviderString(model, reasoning),
+				);
+			}
+			await mutateModel(ctx, providerId, modelId, (m, p) => {
+				const modelApi: ProviderApi = (m?.api as ProviderApi) || (p?.api as ProviderApi) || (provider?.api as ProviderApi) || "openai-completions";
+				applyReasoning(m, reasoning, wireOverride, modelApi);
+			});
 		} else if (field === "vision") {
 			const vision = await promptVision(ctx, opts.vision);
 			if (vision === null) continue;
@@ -1096,14 +1246,14 @@ async function editSingleModel(ctx: CommandContext, providerId: string, modelId:
 }
 
 // Mutate a single model entry in place and save.
-async function mutateModel(ctx: CommandContext, providerId: string, modelId: string, mutate: (model: any) => void): Promise<boolean> {
+async function mutateModel(ctx: CommandContext, providerId: string, modelId: string, mutate: (model: any, provider?: any) => void): Promise<boolean> {
 	return mutateProvider(ctx, providerId, (p) => {
 		const models = Array.isArray(p.models) ? p.models : [];
 		const index = models.findIndex((m: any) => modelIdOf(m) === modelId);
 		if (index === -1) return false;
 		// Strings become objects so per-field knobs have somewhere to live.
 		if (typeof models[index] === "string") models[index] = { id: modelId, input: ["text", "image"] };
-		mutate(models[index]);
+		mutate(models[index], p);
 		return true;
 	}).then((saved) => {
 		if (saved) ctx.ui.notify(`Updated "${modelId}".`, "info");
@@ -1187,7 +1337,8 @@ async function addModelEntriesToProvider(ctx: CommandContext, providerId: string
 	// model later via Edit provider → Edit a model.
 	const saved = await mutateProvider(ctx, providerId, (p) => {
 		const models = Array.isArray(p.models) ? p.models : [];
-		for (const id of fresh) models.push(buildModelEntry(id, { reasoning: "xhigh", vision: true }));
+		const providerApi: ProviderApi = (p?.api as ProviderApi) || "openai-completions";
+		for (const id of fresh) models.push(buildModelEntry(id, { reasoning: "xhigh", vision: true }, undefined, providerApi));
 		p.models = models;
 		return true;
 	});
