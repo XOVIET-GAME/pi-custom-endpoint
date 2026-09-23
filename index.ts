@@ -730,6 +730,7 @@ function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOve
 		...(existingThinking ?? {}),
 		mode,
 		efforts: canonicalEfforts.slice(0, ceilingIndex + 1),
+		defaultLevel: ceiling,
 	};
 	delete entry.thinking.requiresEffort;
 
