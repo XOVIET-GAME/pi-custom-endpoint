@@ -170,8 +170,8 @@ backwards compatibility: `minimal` through `high` are available by default, whil
 ### Native OMP `max` vs. provider wire aliases
 
 - **Native `max` capability:** OMP represents native reasoning levels using
-  `thinking: { mode: "effort" | "anthropic-adaptive", efforts: [...] }`. Selecting the `max` ceiling includes
-  `max` in `thinking.efforts` (`[minimal, low, medium, high, xhigh, max]`), unlocking
+  `thinking: { mode: "effort" | "anthropic-adaptive", efforts: [...], defaultLevel: ... }`. Selecting the `max` ceiling includes
+  `max` in `thinking.efforts` (`[minimal, low, medium, high, xhigh, max]`) with `thinking.defaultLevel` set to the selected ceiling, unlocking
   native `max` in OMP while maintaining `thinkingLevelMap` for Pi and backwards compatibility.
 - **Provider wire alias (`{xhigh: "max"}`):** Existing configs may map `xhigh` to
   `"max"` in `thinkingLevelMap` (e.g. `{ xhigh: "max" }`). This is a provider wire-value

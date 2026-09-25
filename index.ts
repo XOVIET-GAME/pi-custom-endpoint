@@ -592,13 +592,24 @@ async function promptMaxTokens(ctx: CommandContext, current?: number): Promise<n
 function readModelOptions(model: any): ModelOptions {
 	const vision = Array.isArray(model?.input) ? model.input.includes("image") : true;
 	const contextWindow = typeof model?.contextWindow === "number" ? model.contextWindow : undefined;
-	if (!model || model.reasoning === false || (model.reasoning !== true && !model.thinking)) {
+	if (
+		!model ||
+		model.reasoning === false ||
+		(model.reasoning !== true && !model.thinking) ||
+		model.thinking?.mode === "none" ||
+		model.thinking?.mode === "off" ||
+		model.thinking?.defaultLevel === "off"
+	) {
 		return { reasoning: "off", vision, contextWindow };
 	}
 
 	// 1. Native OMP thinking.efforts metadata: highest recognized effort determines ceiling.
 	// Recognizes native max before xhigh when modern metadata has it.
-	const efforts = Array.isArray(model?.thinking?.efforts) ? model.thinking.efforts : undefined;
+	const efforts = Array.isArray(model?.thinking?.efforts)
+		? model.thinking.efforts
+		: Array.isArray(model?.thinking)
+			? model.thinking
+			: undefined;
 	if (efforts && efforts.length > 0) {
 		for (let i = REASONING_LEVELS.length - 1; i >= 1; i--) {
 			const level = REASONING_LEVELS[i];
@@ -606,6 +617,14 @@ function readModelOptions(model: any): ModelOptions {
 				return { reasoning: level, vision, contextWindow };
 			}
 		}
+	}
+
+	// 1b. Fall back to thinking.defaultLevel if efforts is absent.
+	if (
+		typeof model?.thinking?.defaultLevel === "string" &&
+		(REASONING_LEVELS as readonly string[]).includes(model.thinking.defaultLevel)
+	) {
+		return { reasoning: model.thinking.defaultLevel as ReasoningCeiling, vision, contextWindow };
 	}
 
 	// 2. Fall back to legacy thinkingLevelMap.
@@ -618,12 +637,15 @@ function readModelOptions(model: any): ModelOptions {
 		} else if (map.xhigh !== undefined && map.xhigh !== null) {
 			ceiling = "xhigh";
 		} else {
+			let found = false;
 			for (let i = REASONING_LEVELS.indexOf("high"); i >= 1; i--) {
 				const level = REASONING_LEVELS[i];
 				if (map[level] === null) continue;
 				ceiling = level;
+				found = true;
 				break;
 			}
+			if (!found) ceiling = "off";
 		}
 	}
 	return { reasoning: ceiling, vision, contextWindow };
@@ -687,7 +709,7 @@ function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOve
 	const effortMap = compat?.reasoningEffortMap && typeof compat.reasoningEffortMap === "object"
 		? compat.reasoningEffortMap
 		: undefined;
-	const existingThinking = entry.thinking && typeof entry.thinking === "object"
+	const existingThinking = entry.thinking && typeof entry.thinking === "object" && !Array.isArray(entry.thinking)
 		? entry.thinking
 		: undefined;
 
@@ -704,7 +726,16 @@ function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOve
 		} else {
 			delete entry.thinking;
 		}
-		delete entry.thinkingLevelMap;
+		if (entry.thinkingLevelMap && typeof entry.thinkingLevelMap === "object") {
+			for (const level of REASONING_LEVELS) {
+				delete entry.thinkingLevelMap[level];
+			}
+			if (Object.keys(entry.thinkingLevelMap).length === 0) {
+				delete entry.thinkingLevelMap;
+			}
+		} else {
+			delete entry.thinkingLevelMap;
+		}
 		if (effortMap) {
 			delete effortMap.xhigh;
 			delete effortMap.max;
@@ -735,7 +766,17 @@ function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOve
 	delete entry.thinking.requiresEffort;
 
 	// Legacy thinkingLevelMap for pi / backcompat
-	const map: Record<string, string | null> = {};
+	// Preserve unrelated custom keys in thinkingLevelMap if any exist
+	const existingMap = entry.thinkingLevelMap && typeof entry.thinkingLevelMap === "object"
+		? { ...entry.thinkingLevelMap }
+		: undefined;
+	if (existingMap) {
+		for (const level of REASONING_LEVELS) {
+			delete existingMap[level];
+		}
+	}
+
+	const map: Record<string, string | null> = { ...(existingMap ?? {}) };
 	if (ceiling === "max") {
 		map.xhigh = "xhigh";
 		map.max = override || "max";
@@ -750,7 +791,6 @@ function applyReasoning(entry: any, ceiling: ReasoningCeiling, providerStringOve
 	}
 	if (Object.keys(map).length > 0) entry.thinkingLevelMap = map;
 	else delete entry.thinkingLevelMap;
-
 	// Wire-value override in compat.reasoningEffortMap for non-default wire values
 	if (effortMap) {
 		delete effortMap.xhigh;
@@ -1061,8 +1101,17 @@ async function setProviderContextWindow(ctx: CommandContext, providerId: string)
 			const modelApi: ProviderApi = (m?.api as ProviderApi) || (p?.api as ProviderApi) || (provider?.api as ProviderApi) || "openai-completions";
 			const rebuilt = buildModelEntry(modelIdOf(m), opts, wireOverride, modelApi);
 			if (m?.api) rebuilt.api = m.api;
-			if (m.thinking && typeof m.thinking === "object") {
-				rebuilt.thinking = { ...m.thinking, ...rebuilt.thinking };
+			if (opts.reasoning === "off") {
+				delete m.reasoning;
+				delete m.thinking;
+				delete m.thinkingLevelMap;
+				delete rebuilt.thinking;
+				delete rebuilt.thinkingLevelMap;
+			} else {
+				if (m.thinking && typeof m.thinking === "object") {
+					rebuilt.thinking = { ...m.thinking, ...rebuilt.thinking };
+				}
+				if (!rebuilt.thinkingLevelMap) delete m.thinkingLevelMap;
 			}
 			if (m.compat && typeof m.compat === "object") {
 				const existingCompat = { ...m.compat };
